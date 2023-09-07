@@ -14,7 +14,6 @@ use std::{
 
 const EXIT_ARG_ERROR: i32 = 2;
 
-
 #[async_std::main]
 async fn main() -> anyhow::Result<()> {
     let args = std::env::args().skip(1).collect::<Vec<_>>();
@@ -52,7 +51,11 @@ async fn main() -> anyhow::Result<()> {
     let mut out = BufWriter::new(std::io::stdout());
     for (set_idx, result_set) in results.into_iter().enumerate() {
         let res = match output_format.as_str() {
-            "json" => writeln!(out, "{}", result_set.into_json_fmt()),
+            "json" => writeln!(
+                out,
+                "{}",
+                serde_json::to_string(&result_set.into_iter().collect::<Vec<_>>())?
+            ),
             "text" => {
                 // TODO: use markdown table format
                 writeln!(out, "result set {}:", set_idx + 1)?;
@@ -74,4 +77,3 @@ async fn main() -> anyhow::Result<()> {
     }
     Ok(())
 }
-
