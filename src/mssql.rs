@@ -67,13 +67,6 @@ impl Iterator for ResultSetIter {
 
 #[derive(Debug)]
 pub(crate) struct ResultSet(Vec<tiberius::Row>);
-
-impl ResultSet {
-    pub(crate) fn into_json_fmt(self) -> json::JsonFmtResultSet {
-        json::JsonFmtResultSet(self.into_iter().collect())
-    }
-}
-
 pub(crate) struct ResultRowIter(Vec<tiberius::Row>);
 
 impl IntoIterator for ResultSet {
@@ -102,13 +95,13 @@ struct ResultValueIter<'a> {
 }
 
 impl<'a> Iterator for ResultValueIter<'a> {
-    type Item = ResultValue<'a>;
+    type Item = ResultValueRef<'a, 'a>;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.idx >= self.len {
             return None;
         }
-        let val = self.row.value(self.idx);
+        let val = self.row.value_as_ref(self.idx);
         self.idx += 1;
         val
     }
@@ -130,16 +123,12 @@ impl IntoIterator for ResultRow {
     }
 }
 
-impl<'a> ResultRow {
-    pub(crate) fn iter_columns(&'a self) -> impl Iterator<Item = &'a str> {
-        self.0.columns().iter().map(|c| c.name())
-    }
-
-    pub(crate) fn value(&'a self, index: usize) -> Option<ResultValue<'a>> {
+impl<'a, 'b> ResultRow {
+    pub(crate) fn value_as_ref(&'a self, index: usize) -> Option<ResultValueRef<'a, 'b>> {
         self.0.get(index)
     }
 
-    pub(crate) fn iter_values(&'a self) -> impl Iterator<Item = ResultValue<'a>> {
+    pub(crate) fn iter_values(&'a self) -> impl Iterator<Item = ResultValueRef<'a, 'a>> {
         ResultValueIter {
             idx: 0,
             len: self.0.len(),
@@ -148,24 +137,26 @@ impl<'a> ResultRow {
     }
 }
 
-#[derive(Debug, Clone)]
-pub(crate) struct ResultValue<'a>(tiberius::ColumnData<'a>);
-
-impl<'a> tiberius::FromSql<'a> for ResultValue<'a> {
-    fn from_sql(value: &'a tiberius::ColumnData<'static>) -> tiberius::Result<Option<Self>> {
-        Ok(Some(ResultValue(value.clone()))) // FIXME: avoid clone here
+impl<'a> ResultRow {
+    pub(crate) fn iter_columns(&'a self) -> impl Iterator<Item = &'a str> {
+        self.0.columns().iter().map(|c| c.name())
     }
 }
 
-// newtype pattern
-struct ResultValueRef<'a, 'b>(&'a tiberius::ColumnData<'b>);
+#[derive(Debug, Clone)]
+pub(crate) struct ResultValueRef<'a, 'b>(&'a tiberius::ColumnData<'b>);
+impl<'a, 'b> tiberius::FromSql<'a> for ResultValueRef<'a, 'b> {
+    fn from_sql(value: &'a tiberius::ColumnData<'static>) -> tiberius::Result<Option<Self>> {
+        Ok(Some(ResultValueRef(value)))
+    }
+}
 
 pub(crate) mod fmt {
     use std::fmt::Display;
 
     use chrono::{DateTime, FixedOffset, NaiveDate, NaiveDateTime, NaiveTime};
 
-    use super::{ResultValue, ResultValueOwned, ResultValueRef};
+    use super::{ResultValueOwned, ResultValueRef};
 
     impl<'a, 'b> Display for ResultValueRef<'a, 'b> {
         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -190,12 +181,6 @@ pub(crate) mod fmt {
                 C::DateTime2(d) => fmt_date(f, DateFormat::DateTime2(d)),
                 C::DateTimeOffset(d) => fmt_date(f, DateFormat::DateTimeOffset(d)),
             }
-        }
-    }
-
-    impl<'a> Display for ResultValue<'a> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            ResultValueRef(&self.0).fmt(f)
         }
     }
 
@@ -231,7 +216,7 @@ pub(crate) mod fmt {
                 let d = tiberius::ColumnData::DateTime2(*d);
                 let dt = <NaiveDateTime as tiberius::FromSql>::from_sql(&d);
                 match dt {
-                    Ok(Some(dt)) => write!(f, "{}", dt.format("%Y-%m-%dT%H:%M:%S%.7f")),
+                    Ok(Some(dt)) => write!(f, "{}", dt.format("%Y-%m-%dT%H:%M:%S%.6f")),
                     _ => fmt_null(f),
                 }
             }
@@ -335,81 +320,55 @@ pub(crate) mod fmt {
 }
 
 pub(crate) mod json {
-    use std::fmt::Display;
 
-    use super::{ResultRow, ResultValue};
+    use serde::ser::SerializeMap;
 
-    pub(crate) struct JsonFmtResultSet(pub(crate) Vec<ResultRow>);
-    pub(crate) struct JsonFmtResultRow<'a>(&'a ResultRow);
-    pub(crate) struct JsonFmtResultColumn<'a>(&'a str);
-    pub(crate) struct JsonFmtResultValue<'a>(ResultValue<'a>);
+    use super::{ResultRow, ResultValueRef};
 
-    impl Display for JsonFmtResultSet {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            write!(f, "[")?;
-            let len = self.0.len();
-            for (i, row) in self.0.iter().enumerate() {
-                write!(f, "{}", JsonFmtResultRow(row))?;
-                if i < len - 1 {
-                    write!(f, ",")?;
+    impl serde::Serialize for ResultRow {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let mut row = serializer.serialize_map(Some(self.0.len()))?;
+            for (i, (col, val)) in self.iter_columns().zip(self.iter_values()).enumerate() {
+                if col.is_empty() {
+                    row.serialize_key(&format_args!("_{i}"))?;
+                    row.serialize_value(&val)?;
+                } else {
+                    row.serialize_entry(col, &val)?;
                 }
             }
-            writeln!(f, "]")
-        }
-    }
-    impl<'a> Display for JsonFmtResultRow<'a> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            let cols = self.0.iter_columns();
-            let len = self.0 .0.len();
-            write!(f, "{{")?;
-            for (i, (col, val)) in cols.zip(self.0.iter_values()).enumerate() {
-                write!(
-                    f,
-                    "\"{}\": {}",
-                    JsonFmtResultColumn(col),
-                    JsonFmtResultValue(val)
-                )?;
-                if i < len - 1 {
-                    write!(f, ",")?;
-                }
-            }
-            write!(f, "}}")
+            row.end()
         }
     }
 
-    impl<'a> Display for JsonFmtResultColumn<'a> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-            for c in self.0.chars() {
-                match c {
-                    '\0' | '"' | '\\' | '\t' | '\n' | '\r' => write!(f, "{}", c.escape_default()),
-                    '\u{0001}'..='\u{001f}' => {
-                        let mut buf = [0; 2];
-                        c.encode_utf16(&mut buf);
-                        write!(f, "\\u{:02x}{:02x}", buf[0] >> 8, buf[0] & 0xFF)
-                    }
-                    _ => write!(f, "{c}"),
-                }?;
-            }
-            Ok(())
-        }
-    }
-
-    impl<'a> Display for JsonFmtResultValue<'a> {
-        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    impl<'a, 'b> serde::Serialize for ResultValueRef<'a, 'b> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
             type C<'a> = tiberius::ColumnData<'a>;
-            match self.0 .0 {
-                // TODO: add escaping when needed
-                C::Guid(Some(_))
-                | C::Binary(Some(_))
-                | C::String(Some(_))
-                | C::Xml(Some(_))
-                | C::DateTime(Some(_))
-                | C::SmallDateTime(Some(_))
-                | C::Time(Some(_))
+            match self.0 {
+                C::Binary(Some(_))
                 | C::Date(Some(_))
+                | C::DateTime(Some(_))
                 | C::DateTime2(Some(_))
-                | C::DateTimeOffset(Some(_)) => write!(f, "\"{}\"", self.0),
-                _ => write!(f, "{}", self.0),
+                | C::DateTimeOffset(Some(_))
+                | C::Guid(Some(_))
+                | C::Numeric(Some(_))
+                | C::SmallDateTime(Some(_))
+                | C::String(Some(_))
+                | C::Time(Some(_))
+                | C::Xml(Some(_)) => serializer.collect_str(&self),
+                C::Bit(Some(b)) => serializer.serialize_bool(*b),
+                C::F32(Some(f)) => serializer.serialize_f32(*f),
+                C::F64(Some(f)) => serializer.serialize_f64(*f),
+                C::I16(Some(i)) => serializer.serialize_i16(*i),
+                C::I32(Some(i)) => serializer.serialize_i32(*i),
+                C::I64(Some(i)) => serializer.serialize_i64(*i),
+                C::U8(Some(i)) => serializer.serialize_u8(*i),
+                _ => serializer.serialize_none(),
             }
         }
     }
