@@ -8,7 +8,7 @@ use cli::ArgGet;
 mod mssql;
 
 use std::{
-    io::{BufWriter, Write},
+    io::{BufWriter, Write, self},
     process::exit,
 };
 
@@ -70,8 +70,7 @@ async fn main() -> anyhow::Result<()> {
             _ => unreachable!("invalid output format"),
         };
         match res {
-            // TODO: handle broken pipe for other platforms
-            Err(e) if matches!(e.raw_os_error(), Some(32)) => exit(0),
+            Err(e) if matches!(e.kind(), io::ErrorKind::BrokenPipe) => exit(0),
             _ => res?,
         }
     }
