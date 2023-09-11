@@ -216,6 +216,7 @@ pub(crate) mod fmt {
                 let d = tiberius::ColumnData::DateTime2(*d);
                 let dt = <NaiveDateTime as tiberius::FromSql>::from_sql(&d);
                 match dt {
+                    // FIXME: should be able to handle 7 digits of sub-second precision
                     Ok(Some(dt)) => write!(f, "{}", dt.format("%Y-%m-%dT%H:%M:%S%.6f")),
                     _ => fmt_null(f),
                 }
