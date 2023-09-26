@@ -4,6 +4,7 @@
 #![warn(clippy::todo)]
 
 mod cli;
+mod fmt_util;
 use cli::ArgGet;
 mod mssql;
 
