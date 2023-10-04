@@ -4,12 +4,65 @@ use std::{
     process::exit,
 };
 
+use clap::{Parser, Subcommand};
+
 pub(crate) enum Source {
     Arg(String),
     File(String),
     FileLine(String),
     StdIn,
     StdInLine,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub(crate) enum Commands {
+    Connect(ArgsConnect),
+    Query(ArgsQuery),
+    Execute(ArgsExecute),
+}
+
+#[derive(clap::Parser, Clone, Debug)]
+pub(crate) struct Cli {
+    #[command(subcommand)]
+    pub command: Commands
+}
+
+#[derive(clap::Args, Clone, Debug)]
+pub(crate) struct ArgsConnect {
+
+    #[arg(short, long)]
+    pub connection_string: Option<String>,
+    #[arg(short, long)]
+    pub name: Option<String>,
+}
+
+#[derive(clap::Parser, Clone, Debug)]
+pub(crate) struct ArgsQuery {
+    #[arg(short, long)]
+    pub connection_string: Option<String>,
+    #[arg(short, long)]
+    pub name: Option<String>,
+    #[arg(short, long)]
+    pub query: Option<String>,
+    #[arg(short, long)]
+    pub format: Option<OutputFormat>,
+}
+
+#[derive(clap::ValueEnum, Clone, Debug, Default)]
+pub(crate) enum OutputFormat {
+    #[default]
+    Json,
+    Text,
+}
+
+#[derive(clap::Parser, Clone, Debug)]
+pub(crate) struct ArgsExecute {
+    #[arg(short, long)]
+    pub connection_string: Option<String>,
+    #[arg(short, long)]
+    pub name: Option<String>,
+    #[arg(short, long)]
+    pub script: Option<String>,
 }
 
 impl Source {
@@ -61,25 +114,3 @@ impl Source {
         }
     }
 }
-
-pub(crate) trait ArgGet {
-    fn get(&self, name: &'static str) -> Option<String>;
-
-    fn get_required(&self, name: &'static str) -> String {
-        match self.get(name) {
-            Some(s) => s,
-            None => {
-                eprintln!("Could not find required argument {name}");
-                exit(1);
-            }
-        }
-    }
-}
-
-impl ArgGet for Vec<String> {
-    fn get(&self, name: &'static str) -> Option<String> {
-        let mut iter = self.iter();
-        iter.find(|&a| a == name).and(iter.next()).map(String::from)
-    }
-}
-
