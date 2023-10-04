@@ -10,20 +10,20 @@ A tool make interacting with a database much easier to script and automate.
 
 ### Connecting
 
-Connect to a database using `-x` flag followed by a connection string.
+Connect to a database using `connect` command followed by a connection string.
 To make the connection persistent, use `-d` to keep the connection open in the background and used by subsequent commands. Without `-d` the connection will immediately close after running any other operations (such as queries or commands, see below for details).
 
 Example connecting to a SQL Server database:
 
 ```sh
-$ db -d -x "Server=localhost;User=SA;Password=P@ssw0rd;"
+$ db connect -d -c "Server=localhost;User=SA;Password=P@ssw0rd;"
 default connection successful
 ```
 
 Optionally the connection can be named with `-n` flag:
 
 ```sh
-$ db -d -n dev1 -x "Server=localhost;User=SA;Password=P@ssw0rd;"
+$ db connect -d -n dev1 -c "Server=localhost;User=SA;Password=P@ssw0rd;"
 dev1 connection successful
 ```
 
@@ -32,7 +32,7 @@ dev1 connection successful
 The active database connection can be queried by using the `-q` flag followed by the query.
 
 ```sh
-$ db -q "SELECT id, name FROM users"
+$ db query "SELECT id, name FROM users"
  id |    name
 ----|--------------
   1 | John Johnson
@@ -42,35 +42,35 @@ $ db -q "SELECT id, name FROM users"
 Standard in can be used instead by passing `-q -`:
 
 ```sh
-$ echo "SELECT 1" | db -q - -o users.json
+$ echo "SELECT 1" | db query - -o users.json
 1
 ```
 
 A new connection can be created by using `-x` (see above). To use a connection other than `default`, use the `-n` argument to specify the existing connection:
 
 ```sh
-$ db -n conn1 -q "SELECT 1"
+$ db query -n conn1 "SELECT 1"
 1
 ```
 
 Output can be saved to a file with the `-o` flag. Output format is inferred from the output file name, defaulting to CSV if an unknown extension. To change the output format `-f <format>` can be specified. Currently supported output formats:
-* `csv` (default)
-* `json`
-* `markdown`
+* `json` (default)
+* `csv` (TODO)
+* `text` (TODO)
 
 ### Commands
 
-Like queries, commands can be used with the `-c` argument:
+Like queries, statements can be executed with the `execute` subcommand:
 
 ```sh
-$ db -c "INSERT INTO users (id, name, email) VALUES (1, 'jake', 'jake@kagaru.com')"
+$ db execute "INSERT INTO users (id, name, email) VALUES (1, 'jake', 'jake@kagaru.com')"
 1 row affected
 ```
 
-Command input can be read from a file, just like queries by using `-c -`:
+Command input can be read from a file, just like queries by using `-` instead of a filename or SQL text:
 
 ```sh
-$ db -c -
+$ db execute -
 10 rows affected
 ```
 
@@ -79,7 +79,7 @@ $ db -c -
 Parameterized commands can also be performed using the syntax `$<variable>` and passing arguments by name with `-p <variable>=<value>` syntax.
 
 ```sh
-$ db -c "INSERT INTO users (id, name, email) VALUES ($id, $name, $email)" \
+$ db execute "INSERT INTO users (id, name, email) VALUES ($id, $name, $email)" \
   -p id=1 -p "name=Phillip Porter" -p "email=phil@porter.net"
 1 row affected
 ```
@@ -89,23 +89,23 @@ Instead of passing them one-by-one, parameters can be read from a file using `-p
 If more than one row of data is to be used, the `-s` option enables streaming mode where each row of the paramter file is used and the command runs multiple times. If batch size is important, this can be specified with the `-b <max-batch-size>` paramter.
 
 ```sh
-$ db -c "INSERT INTO users (id, name, email) VALUES ($id, $name, $email)" \
+$ db execute "INSERT INTO users (id, name, email) VALUES ($id, $name, $email)" \
   -s -p ./users.csv
 ```
 
 ### Generating SQL
 
-If generating a SQL script is needed, the `-o` flag can be used with a filename ending in `.sql` or by specifying `-f sql`:
+If generating a SQL script is needed, the `sql` subcommand along with `-o` flag can be used with a filename ending in `.sql` or by specifying `-f sql`:
 
 ```sh
-$ db -c "INSERT INTO users (id, name, email) VALUES ($id, $name, $email)" \
+$ db sql "INSERT INTO users (id, name, email) VALUES ($id, $name, $email)" \
   -s -p ./users.csv -o insert-users.sql
 ```
 
 Example writing generated to standard out (and not executing):
 
 ```sh
-$ db -c "INSERT INTO users (id, name, email) VALUES ($id, $name, $email)" \
+$ db sql "INSERT INTO users (id, name, email) VALUES ($id, $name, $email)" \
   -s -p ./users.csv -o -
 INSERT INTO users (id, name, email) VALUES (1, 'Phillip Porter', 'phil@porter.net')
 ```

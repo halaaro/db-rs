@@ -29,7 +29,6 @@ pub(crate) struct Cli {
 
 #[derive(clap::Args, Clone, Debug)]
 pub(crate) struct ArgsConnect {
-
     #[arg(short, long)]
     pub connection_string: Option<String>,
     #[arg(short, long)]
